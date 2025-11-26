@@ -1,0 +1,36 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.11.1
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "auto_vk_toolkit", "auto_vk_toolkit\visual_studio\auto_vk_toolkit\auto_vk_toolkit.vcxproj", "{602F842F-50C1-466D-8696-1707937D8AB9}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "renderer", "renderer.vcxproj", "{33766b33-5358-44b6-9e90-0012c21f70dc}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug_Vulkan|x64 = Debug_Vulkan|x64
+		Publish_Vulkan|x64 = Publish_Vulkan|x64
+		Release_Vulkan|x64 = Release_Vulkan|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{602F842F-50C1-466D-8696-1707937D8AB9}.Debug_Vulkan|x64.ActiveCfg = Debug_Vulkan|x64
+		{602F842F-50C1-466D-8696-1707937D8AB9}.Debug_Vulkan|x64.Build.0 = Debug_Vulkan|x64
+		{602F842F-50C1-466D-8696-1707937D8AB9}.Publish_Vulkan|x64.ActiveCfg = Publish_Vulkan|x64
+		{602F842F-50C1-466D-8696-1707937D8AB9}.Publish_Vulkan|x64.Build.0 = Publish_Vulkan|x64
+		{602F842F-50C1-466D-8696-1707937D8AB9}.Release_Vulkan|x64.ActiveCfg = Release_Vulkan|x64
+		{602F842F-50C1-466D-8696-1707937D8AB9}.Release_Vulkan|x64.Build.0 = Release_Vulkan|x64
+		{33766b33-5358-44b6-9e90-0012c21f70dc}.Debug_Vulkan|x64.ActiveCfg = Debug_Vulkan|x64
+		{33766b33-5358-44b6-9e90-0012c21f70dc}.Debug_Vulkan|x64.Build.0 = Debug_Vulkan|x64
+		{33766b33-5358-44b6-9e90-0012c21f70dc}.Publish_Vulkan|x64.ActiveCfg = Publish_Vulkan|x64
+		{33766b33-5358-44b6-9e90-0012c21f70dc}.Publish_Vulkan|x64.Build.0 = Publish_Vulkan|x64
+		{33766b33-5358-44b6-9e90-0012c21f70dc}.Release_Vulkan|x64.ActiveCfg = Release_Vulkan|x64
+		{33766b33-5358-44b6-9e90-0012c21f70dc}.Release_Vulkan|x64.Build.0 = Release_Vulkan|x64
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {2EBE7A5D-F88D-4AA0-B416-75634016A0A7}
+	EndGlobalSection
+EndGlobal
+

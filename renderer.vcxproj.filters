@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="host_code">
+      <UniqueIdentifier>{e0dfc653-ff87-401e-b5fe-1d2e0ca71dda}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="host_code\precompiled_headers">
+      <UniqueIdentifier>{fa75ce15-fa1a-4879-b38d-609f6093a841}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="assets">
+      <UniqueIdentifier>{affdeac7-6dc7-4737-83d9-40481df1072c}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="shaders">
+      <UniqueIdentifier>{22b65237-3e14-459e-bf02-b0f3427eb357}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="results">
+      <UniqueIdentifier>{5d33c65a-19c5-45cd-887d-4f5d1dabcb94}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="host_code\main.cpp">
+      <Filter>host_code</Filter>
+    </ClCompile>
+    <ClCompile Include="host_code\precompiled_headers.cpp">
+      <Filter>host_code\precompiled_headers</Filter>
+    </ClCompile>
+    <ClCompile Include="host_code\model_loader.cpp">
+      <Filter>host_code</Filter>
+    </ClCompile>
+    <ClCompile Include="host_code\renderer.cpp">
+      <Filter>host_code</Filter>
+    </ClCompile>
+    <ClCompile Include="host_code\camera_controller.cpp">
+      <Filter>host_code</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="host_code\precompiled_headers.hpp">
+      <Filter>host_code\precompiled_headers</Filter>
+    </ClInclude>
+    <ClInclude Include="host_code\targetver.hpp">
+      <Filter>host_code\precompiled_headers</Filter>
+    </ClInclude>
+    <ClInclude Include="host_code\model_loader.h">
+      <Filter>host_code</Filter>
+    </ClInclude>
+    <ClInclude Include="host_code\INIReader.h">
+      <Filter>host_code</Filter>
+    </ClInclude>
+    <ClInclude Include="host_code\material_helper.hpp">
+      <Filter>host_code</Filter>
+    </ClInclude>
+    <ClInclude Include="host_code\renderer.h">
+      <Filter>host_code</Filter>
+    </ClInclude>
+    <ClInclude Include="host_code\camera_controller.h">
+      <Filter>host_code</Filter>
+    </ClInclude>
+    <ClInclude Include="host_code\compressed_image_data.hpp">
+      <Filter>host_code</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="assets\models.ini">
+      <Filter>assets</Filter>
+    </None>
+    <None Include="assets\sponza.glb">
+      <Filter>assets</Filter>
+    </None>
+    <None Include="shaders\closest_hit_shader.rchit">
+      <Filter>shaders</Filter>
+    </None>
+    <None Include="shaders\miss_shader.rmiss">
+      <Filter>shaders</Filter>
+    </None>
+    <None Include="shaders\ray_gen_shader.rgen">
+      <Filter>shaders</Filter>
+    </None>
+    <None Include="assets\cyberpunk_speeder.glb">
+      <Filter>assets</Filter>
+    </None>
+    <None Include="assets\pbr_material_reference.glb">
+      <Filter>assets</Filter>
+    </None>
+    <None Include="assets\spheres.glb">
+      <Filter>assets</Filter>
+    </None>
+    <None Include="assets\water.glb">
+      <Filter>assets</Filter>
+    </None>
+    <None Include="assets\cornell_box.glb">
+      <Filter>assets</Filter>
+    </None>
+    <None Include="assets\water_pool.glb">
+      <Filter>assets</Filter>
+    </None>
+    <None Include="assets\glass.glb">
+      <Filter>assets</Filter>
+    </None>
+    <None Include="assets\ring.glb">
+      <Filter>assets</Filter>
+    </None>
+    <None Include="assets\veach_glossy.glb">
+      <Filter>assets</Filter>
+    </None>
+    <None Include="results\.keep">
+      <Filter>results</Filter>
+    </None>
+  </ItemGroup>
+</Project>

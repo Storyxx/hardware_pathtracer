@@ -1,0 +1,6 @@
+.vs
+.vscode
+bin
+temp
+*.glb
+*.blend

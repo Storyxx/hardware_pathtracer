@@ -1,0 +1,708 @@
+#version 460
+#extension GL_EXT_ray_tracing : require
+#extension GL_GOOGLE_include_directive : require
+#extension GL_EXT_ray_query : require
+
+layout(push_constant) uniform PushConstants {
+    mat4 mCameraTransform;
+    mat4 mInvCameraTransform;
+    float mCameraHalfFovAngle;
+} pushConstants;
+
+layout(set = 2, binding = 0) uniform accelerationStructureEXT topLevelAS;
+layout(set = 1, binding = 0, rgba32f) uniform image2D cameraImage;
+layout(set = 1, binding = 1, rgba32f) uniform image2D lightImage;
+layout(set = 1, binding = 2, rgba8) uniform image2D resultImage;
+
+
+#define EPSILON 0.001
+#define PI 3.1415926353
+#define INV_PI 0.31830988618
+#define INV_TWO_PI 0.15915494309
+#define TWO_PI 6.28318530718
+
+#define CULL_MASK 0xff
+
+#define MAX_DEPTH 10
+
+#define RR true // russian roulette
+#define NNE true // next event estimation
+#define BDPT false // bidirectional path tracing (first diffuse bounce only)
+#define SMS true // specular manifold sampling
+
+
+vec3 lightPosition = vec3(15, 20, 2);
+vec3 lightValue = vec3(500000);
+float lightSize = 0.2;
+vec3 skyboxColor = vec3(0.5, 0.7, 1.0) * 10;
+
+
+struct Ray {
+    vec3 origin;
+    vec3 direction;
+    float tmin;
+    float tmax;
+};
+
+struct BSDF {
+	vec3 albedo;
+    vec3 emission;
+	float roughness;
+	float metalness;
+    float transmission;
+};
+
+struct RayPayloadType {
+    BSDF bsdf;
+	vec3 normal;
+    vec3 position;
+	bool hit;
+};
+
+layout(location = 0) rayPayloadEXT RayPayloadType payload; // payload to traceRayEXT
+
+
+
+//////////////////// HELPER FUNCTIONS ////////////////////
+
+vec3 hash( uvec3 x ) {
+    const uint k = 1103515245U;
+    x = ((x>>8U)^x.yzx)*k;
+    x = ((x>>8U)^x.yzx)*k;
+    x = ((x>>8U)^x.yzx)*k;
+
+    return vec3(x)*(1.0/float(0xffffffffU));
+}
+
+vec3 nextRandom(inout vec3 random) {
+    random = hash(uvec3(uint(random.x*1000.0),
+                        uint(random.y*1000.0),
+                        uint(random.z*1000.0)));
+    return random;
+}
+
+float max3(vec3 v) {
+  return max(max(v.x, v.y), v.z);
+}
+
+//////////////////// WARP ////////////////////
+
+vec3 squareToUniformSphere(vec3 random) {
+    float cosTheta = random.y * 2.0 - 1.0;
+    float sinTheta = sqrt(max(0.0, 1.0 - cosTheta * cosTheta));
+    float phi = TWO_PI * random.x;
+
+    return vec3(cos(phi) * sinTheta, cosTheta, sin(phi) * sinTheta);
+}
+
+vec2 squareToUniformDisk(vec3 random) {
+	float angle = random.x * PI * 2;
+	float dist = sqrt(random.y);
+	return vec2(sin(angle) * dist, cos(angle) * dist);
+}
+
+vec3 squareToCosineHemisphere(vec3 random) {
+    vec2 disc = squareToUniformDisk(random);
+    float y = sqrt(max(0, 1 - disc.x * disc.x - disc.y * disc.y));
+    return vec3(disc.x, y, disc.y);
+}
+
+float squareToCosineHemispherePdf(vec3 vector) {
+	float cosTheta = dot(vector, vec3(0,1,0));
+	return vector.y > 0 ? cosTheta * INV_PI : 0;
+}
+
+
+
+//////////////////// MATERIALS ////////////////////
+
+float fresnelDielectric(float cosTheta_i, float eta) {
+    if (cosTheta_i < 0) {
+        eta = 1.0 / eta;
+        cosTheta_i = -cosTheta_i;
+    }
+
+    float sin2Theta_i = 1.0 - cosTheta_i * cosTheta_i;
+    float sin2Theta_t = sin2Theta_i / (eta * eta);
+    if (sin2Theta_t >= 1)
+        return 1.0;
+
+    float cosTheta_t = sqrt(1 - sin2Theta_t);
+
+    float r_parl = (eta * cosTheta_i - cosTheta_t) / (eta * cosTheta_i + cosTheta_t);
+    float r_perp = (cosTheta_i - eta * cosTheta_t) / (cosTheta_i + eta * cosTheta_t);
+    return (r_parl * r_parl + r_perp * r_perp) / 2.0;
+}
+
+bool refractDielectric(float cosTheta_i, vec3 wi, vec3 n, float eta, out vec3 wt) {
+    if (cosTheta_i < 0) {
+        eta = 1.0 / eta;
+        cosTheta_i = -cosTheta_i;
+        n = -n;
+    }
+
+    float sin2Theta_i = max(0.0, 1.0 - cosTheta_i * cosTheta_i);
+    float sin2Theta_t = sin2Theta_i / (eta * eta);
+    if (sin2Theta_t >= 1)
+        return false;
+
+    float cosTheta_t = sqrt(1.0 - sin2Theta_t);
+
+    wt = -wi / eta + (cosTheta_i / eta - cosTheta_t) * n;
+
+    return true;
+}
+
+vec3 evaluateBSDF(BSDF bsdf, vec3 normal, vec3 wi, vec3 random, bool overrideFresnel, out vec3 wo, inout bool isTransmission) {
+    float cosTheta;
+
+    if (bsdf.transmission == 1) {
+        float extIOR = 1.33; //water //1.5046; //glass
+        float intIOR = 1.000277; // air
+        float eta = extIOR / intIOR;
+
+        float cosTheta_i = dot(-wi, normal);
+
+        if (overrideFresnel) {
+            if (isTransmission) {
+                isTransmission = true;
+                bool success = refractDielectric(cosTheta_i, -wi, normal, eta, wo);
+                if (!success) {
+                    wo = vec3(0);
+                    return vec3(0);
+                }
+            } else {
+                isTransmission = false;
+                wo = reflect(wi, normal);
+            }
+        } else {
+            float R = fresnelDielectric(cosTheta_i, eta);
+            if (random.x > R) {
+                isTransmission = true;
+                bool success = refractDielectric(cosTheta_i, -wi, normal, eta, wo);
+                if (!success) {
+                    wo = vec3(0);
+                    return vec3(0);
+                }
+            } else {
+                isTransmission = false;
+                wo = reflect(wi, normal);
+            }
+        }
+
+        
+        return bsdf.albedo;
+    }
+
+    isTransmission = false;
+
+    if (bsdf.metalness == 0) {
+        vec3 tangent = normalize(cross(normal, vec3(1,0,0)));
+        if (abs(dot(normal, vec3(1,0,0))) > 0.9) {
+            tangent = normalize(cross(normal, vec3(0,1,0)));
+        }
+        vec3 bitangent = cross(normal, tangent);
+        mat3 TNB = mat3(tangent, normal, bitangent);
+
+        vec3 hemisphere = squareToCosineHemisphere(random);
+
+        wo = TNB * hemisphere;
+        cosTheta = dot(wo, normal);
+        return (INV_PI * bsdf.albedo * cosTheta) / squareToCosineHemispherePdf(hemisphere);
+    }
+
+    if (bsdf.metalness == 1) {
+        wo = reflect(wi, normal);
+        return bsdf.albedo;
+    }
+}
+
+
+vec3 evaluateSkybox(vec3 direction) {
+    vec3 result = skyboxColor;
+
+    // float cosTheta = dot(direction, normalize(lightPosition));
+    // float size = 0.0001;
+    // if (cosTheta > 1-size) {
+    //     result += lightValue * (1.0/size);
+    // }
+
+    return result;
+}
+
+bool isDiscrete(BSDF bsdf) {
+    return bsdf.metalness == 1 || bsdf.transmission == 1;
+}
+
+//////////////////// PATH TRACING ////////////////////
+
+
+void lightNNE(Ray ray, vec3 cameraPosition, vec3 lookAt, RayPayloadType primaryPayload, vec3 color, int depth) {
+    vec3 samplePosition = cameraPosition;
+    vec3 sampleNormal = -normalize(primaryPayload.position - samplePosition);
+
+    vec3 rayOrigin = primaryPayload.position + primaryPayload.normal * EPSILON;
+    vec3 rayDirection = normalize(samplePosition - rayOrigin);
+
+    if (dot(rayDirection, lookAt) < 0) {
+        return;
+    }
+
+    float dist = length(samplePosition - rayOrigin);
+
+    vec3 result = vec3(0);
+
+    Ray secondaryRay = Ray(rayOrigin, rayDirection, 0, dist-EPSILON);
+
+    uint rayFlags = gl_RayFlagsOpaqueEXT | gl_RayFlagsSkipClosestHitShaderEXT | gl_RayFlagsTerminateOnFirstHitEXT;
+
+    traceRayEXT(topLevelAS, rayFlags, CULL_MASK, 0, 0, 0, secondaryRay.origin, secondaryRay.tmin, secondaryRay.direction, secondaryRay.tmax, 0);
+    if (!payload.hit) {
+        float cosThetaX = max(0.0, dot(primaryPayload.normal, -normalize(ray.direction))); // surface -> scene/lightsource
+        float cosThetaY = 1;//max(0.0, dot(lookAt, rayDirection));
+
+        vec3 directEmission = color;
+        vec3 bsdfValue = (INV_PI * primaryPayload.bsdf.albedo * cosThetaX) / INV_TWO_PI;
+
+        if (depth == 0 && lightSize > 0) {
+            float emitterPdf = 1.0 / (PI * lightSize * lightSize);
+            float distToLight = length(ray.origin - primaryPayload.position);
+            result = (bsdfValue * directEmission * cosThetaX * cosThetaY) / (distToLight * distToLight * emitterPdf);
+        } else {
+            result = bsdfValue * directEmission;
+        }
+    } else {
+        return;
+    }
+
+    // project ray to camera
+    vec3 screenSpace = normalize(mat3(pushConstants.mInvCameraTransform) * -rayDirection);
+    float expectedZ = -1/tan(pushConstants.mCameraHalfFovAngle);
+    float invNormalizationFactor = expectedZ / screenSpace.z;
+
+    float aspectRatio = float(gl_LaunchSizeEXT.x) / float(gl_LaunchSizeEXT.y);
+    vec2 xyDir;
+    xyDir.x = screenSpace.x * invNormalizationFactor / aspectRatio;
+    xyDir.y = -screenSpace.y * invNormalizationFactor;
+
+    if (xyDir.x < -1 || xyDir.x > 1 || xyDir.y < -1 || xyDir.y > 1) {
+        return;
+    }
+
+    vec2 uv = xyDir * 0.5 + 0.5;
+    ivec2 coord = ivec2(uv * vec2(gl_LaunchSizeEXT.xy));
+
+    vec4 average = imageLoad(lightImage, coord).rgba;
+    float frame = average.a + 1;
+
+    //average.rgb -= average.rgb / float(frame);
+    //average.rgb += color / float(frame);
+    average.rgb += result;
+    imageStore(lightImage, coord, vec4(average.rgb, frame));
+
+    return;
+}
+
+
+void traceLightRay(Ray inRay, vec3 randomSeed, vec3 cameraPosition, vec3 lookAt) {
+    int depth = 0;
+    vec3 throughput = vec3(1.0);
+    vec3 color = lightValue;
+    Ray ray = inRay;
+    vec3 random = randomSeed;
+    bool inside = false;
+
+    while (true) {
+        uint rayFlags = gl_RayFlagsOpaqueEXT;
+
+        traceRayEXT(topLevelAS, rayFlags, CULL_MASK, 0, 0, 0, ray.origin, ray.tmin, ray.direction, ray.tmax, 0);
+        RayPayloadType primaryPayload = payload;
+        if (!primaryPayload.hit) {
+            return;
+        }
+
+        if (depth >= MAX_DEPTH) {
+            break;
+        }
+
+        color *= throughput;
+
+        vec3 wo;
+        bool isTransmission;
+        vec3 bsdfValue = evaluateBSDF(primaryPayload.bsdf, primaryPayload.normal, ray.direction, nextRandom(random), false, wo, isTransmission);
+
+        if (!isDiscrete(primaryPayload.bsdf)) {
+            float cosThetaOut = dot(wo, primaryPayload.normal);
+            float cosThetaIn = dot(-ray.direction, primaryPayload.normal);
+
+            bsdfValue = (bsdfValue / cosThetaOut) * cosThetaIn;
+        }
+
+        if (NNE && !isDiscrete(primaryPayload.bsdf)) {
+            lightNNE(ray, cameraPosition, lookAt, primaryPayload, color, depth);
+        }
+
+        if (depth == 0) {
+            vec3 lightToHit = primaryPayload.position - ray.origin;
+            float geometryFactor = abs(1 * dot(wo, primaryPayload.normal)) / dot(lightToHit, lightToHit);
+            color *= geometryFactor;
+        }
+
+        if (!RR && depth + 1 >= MAX_DEPTH) {
+            break;
+        }
+
+        if (bsdfValue == vec3(0)) {
+            break;
+        }
+
+        float rrProb = 1.0;
+        if (RR && depth + 1 >= 4) {
+            rrProb = max3(throughput);
+        }
+        if (RR && nextRandom(random).x >= rrProb) {
+            break;
+        }
+
+        throughput *= bsdfValue / rrProb;
+        throughput = vec3(min(1.0, throughput.r), 
+                          min(1.0, throughput.g), 
+                          min(1.0, throughput.b));
+
+        if (isTransmission) {
+            inside = !inside;
+        }
+
+        float offsetDirection = inside ? -1 : 1;
+        if (payload.bsdf.transmission != 1) {
+            offsetDirection = 1;
+        }
+
+        ray.origin = primaryPayload.position + offsetDirection * primaryPayload.normal * EPSILON;
+        ray.direction = wo;
+
+        depth++;
+    }
+
+    return;
+}
+
+
+// This method has no checks!
+vec3 rayPlaneIntersection(Ray ray, vec3 planeOrigin, vec3 normal) {
+    float denom = dot(normal, ray.direction);
+    float t = dot(planeOrigin - ray.origin, normal) / denom;
+    return ray.origin + t * ray.direction;
+}
+
+
+float error(Ray correct, Ray wish) {
+    return 1.0 - abs(dot(normalize(correct.direction), normalize(wish.direction)));
+}
+
+
+vec3 specularManifoldSampling(
+    Ray diffuseRay,
+    RayPayloadType diffusePayload,
+    vec3 diffuseBSDFValue,
+    vec2 inSquare,
+    Ray specularRay, 
+    RayPayloadType specularPayload, 
+    vec3 randomSeed
+) {
+
+    int maxNewtonSteps = 10;
+    vec3 random = randomSeed;
+    Ray ray = specularRay;
+    float alpha = inSquare.x;
+    float beta = inSquare.y;
+
+    for (int i=0; i<maxNewtonSteps; i++) {
+        // we have found a ray that intersects something specular (reflection or transmission)
+        vec3 wo;
+        bool specularBounceIsTransmission;
+        vec3 specularInBSDFValue = evaluateBSDF(payload.bsdf, payload.normal, ray.direction, nextRandom(random), false, wo, specularBounceIsTransmission);
+
+        // compute error
+        Ray correctRay = Ray(payload.position, wo, 0, 1000);
+        Ray wishRay = Ray(payload.position + payload.normal * EPSILON, normalize(lightPosition - payload.position), 0, 1000);
+        float errorSample = error(correctRay, wishRay);
+
+        if (errorSample < 0.0001) {
+            uint rayFlags = gl_RayFlagsOpaqueEXT | gl_RayFlagsSkipClosestHitShaderEXT;
+            traceRayEXT(topLevelAS, rayFlags, CULL_MASK, 0, 0, 0, wishRay.origin, wishRay.tmin, wishRay.direction, wishRay.tmax, 0);
+
+            if (payload.hit) {
+                return vec3(0);
+            } else {
+                float dist = length(wishRay.origin - lightPosition);
+                float emitterPdf = 1.0 / (PI * lightSize * lightSize);
+                return 50 * lightValue * diffuseBSDFValue * specularInBSDFValue / (dist * dist * emitterPdf);
+            }
+        }
+        
+        // create derivative samples
+        float angleStep = 0.01;
+        vec3 woAlpha1, woAlpha2, woBeta1, woBeta2;
+        bool isTransmission;
+        evaluateBSDF(diffusePayload.bsdf, diffusePayload.normal, diffuseRay.direction, vec3(alpha-angleStep, beta, 0), false, woAlpha1, isTransmission);
+        evaluateBSDF(diffusePayload.bsdf, diffusePayload.normal, diffuseRay.direction, vec3(alpha+angleStep, beta, 0), false, woAlpha2, isTransmission);
+        evaluateBSDF(diffusePayload.bsdf, diffusePayload.normal, diffuseRay.direction, vec3(alpha, beta-angleStep, 0), false, woBeta1, isTransmission);
+        evaluateBSDF(diffusePayload.bsdf, diffusePayload.normal, diffuseRay.direction, vec3(alpha, beta+angleStep, 0), false, woBeta2, isTransmission);
+
+        Ray rayAlpha1 = Ray(diffusePayload.position, woAlpha1, 0, 1000);
+        Ray rayAlpha2 = Ray(diffusePayload.position, woAlpha2, 0, 1000);
+        Ray rayBeta1 = Ray(diffusePayload.position, woBeta1, 0, 1000);
+        Ray rayBeta2 = Ray(diffusePayload.position, woBeta2, 0, 1000);
+
+        vec3 hitPointAlpha1 = rayPlaneIntersection(rayAlpha1, payload.position, payload.normal);
+        vec3 hitPointAlpha2 = rayPlaneIntersection(rayAlpha2, payload.position, payload.normal);
+        vec3 hitPointBeta1 = rayPlaneIntersection(rayBeta1, payload.position, payload.normal);
+        vec3 hitPointBeta2 = rayPlaneIntersection(rayBeta2, payload.position, payload.normal);
+
+        // build correct and wish derivative samples
+        vec3 refractedWoAlpha1, refractedWoAlpha2, refractedWoBeta1, refractedWoBeta2;
+        evaluateBSDF(payload.bsdf, payload.normal, rayAlpha1.direction, nextRandom(random), true, refractedWoAlpha1, specularBounceIsTransmission);
+        evaluateBSDF(payload.bsdf, payload.normal, rayAlpha2.direction, nextRandom(random), true, refractedWoAlpha2, specularBounceIsTransmission);
+        evaluateBSDF(payload.bsdf, payload.normal, rayBeta1.direction, nextRandom(random), true, refractedWoBeta1, specularBounceIsTransmission);
+        evaluateBSDF(payload.bsdf, payload.normal, rayBeta2.direction, nextRandom(random), true, refractedWoBeta2, specularBounceIsTransmission);
+
+        Ray correctRayAlpha1 = Ray(hitPointAlpha1, refractedWoAlpha1, 0, 1000);
+        Ray correctRayAlpha2 = Ray(hitPointAlpha2, refractedWoAlpha2, 0, 1000);
+        Ray correctRayBeta1 = Ray(hitPointBeta1, refractedWoBeta1, 0, 1000);
+        Ray correctRayBeta2 = Ray(hitPointBeta2, refractedWoBeta2, 0, 1000);
+
+        Ray wishRayAlpha1 = Ray(hitPointAlpha1, normalize(lightPosition - hitPointAlpha1), 0, 1000);
+        Ray wishRayAlpha2 = Ray(hitPointAlpha2, normalize(lightPosition - hitPointAlpha2), 0, 1000);
+        Ray wishRayBeta1 = Ray(hitPointBeta1, normalize(lightPosition - hitPointBeta1), 0, 1000);
+        Ray wishRayBeta2 = Ray(hitPointBeta2, normalize(lightPosition - hitPointBeta2), 0, 1000);
+
+
+        float errorAlpha1 = error(correctRayAlpha1, wishRayAlpha1);
+        float errorAlpha2 = error(correctRayAlpha2, wishRayAlpha2);
+        float errorBeta1 = error(correctRayBeta1, wishRayBeta1);
+        float errorBeta2 = error(correctRayBeta2, wishRayBeta2);
+
+        float errorAlphaDerivative = (errorAlpha1-errorAlpha2) / (angleStep+angleStep);
+        float errorBetaDerivative = (errorBeta1-errorBeta2) / (angleStep+angleStep);
+
+        vec3 tangent = normalize(vec3(
+            -errorAlphaDerivative,
+            -errorBetaDerivative,
+            -(errorAlphaDerivative*errorAlphaDerivative + errorBetaDerivative*errorBetaDerivative)
+        ));
+        
+        float t = 0;
+        if (abs(tangent.z) > 0.01) {
+            t = -errorSample / tangent.z;
+        }
+
+        alpha += tangent.x * t;
+        beta += tangent.y * t;
+
+        evaluateBSDF(diffusePayload.bsdf, diffusePayload.normal, diffuseRay.direction, vec3(alpha, beta, 0), false, wo, isTransmission);
+
+        ray = Ray(diffusePayload.position+diffusePayload.normal*0.01, wo, 0, 1000);
+
+        uint rayFlags = gl_RayFlagsOpaqueEXT;
+
+        traceRayEXT(topLevelAS, rayFlags, CULL_MASK, 0, 0, 0, ray.origin, ray.tmin, ray.direction, ray.tmax, 0);
+        if (!payload.hit || !(payload.bsdf.metalness == 1 || payload.bsdf.transmission == 1)) {
+            break; // did not hit a discretely sampled object -> reroll
+        }
+    }
+
+    return vec3(0);
+}
+
+
+
+
+vec3 traceCameraRay(Ray inRay, vec3 randomSeed) {
+    int depth = 0;
+    vec3 throughput = vec3(1.0);
+    vec3 color = vec3(0.0);
+    Ray ray = inRay;
+    vec3 random = randomSeed;
+    bool inside = false;
+
+    Ray previousRay;
+    RayPayloadType previousPayload;
+    float previousAlpha, previousBeta;
+    vec3 previousBSDFValue;
+
+    while (true) {
+        uint rayFlags = gl_RayFlagsOpaqueEXT;
+
+        traceRayEXT(topLevelAS, rayFlags, CULL_MASK, 0, 0, 0, ray.origin, ray.tmin, ray.direction, ray.tmax, 0);
+        RayPayloadType primaryPayload = payload;
+        if (!primaryPayload.hit) {
+            color += evaluateSkybox(ray.direction) * throughput;
+            break;
+        }
+
+        if (depth >= MAX_DEPTH) {
+            break;
+        }
+
+        vec3 wo;
+        bool isTransmission;
+
+        vec2 square = nextRandom(random).xy;
+        float alpha = square.x;
+        float beta = square.y;
+
+        vec3 bsdfValue = evaluateBSDF(primaryPayload.bsdf, primaryPayload.normal, ray.direction, vec3(alpha, beta, nextRandom(random).z), false, wo, isTransmission);
+
+        vec3 emission = primaryPayload.bsdf.emission;
+        vec3 direct = vec3(0);
+
+        if (SMS && depth > 0 && depth <= 2 && !isDiscrete(previousPayload.bsdf) && isDiscrete(primaryPayload.bsdf)) {
+            direct += specularManifoldSampling(previousRay, previousPayload, previousBSDFValue, vec2(previousAlpha, previousBeta), ray, primaryPayload, nextRandom(random));
+        }
+
+        if (NNE && !isDiscrete(primaryPayload.bsdf)) {
+            vec3 samplePosition = lightPosition + squareToUniformSphere(nextRandom(random)) * lightSize;
+            vec3 sampleNormal = -normalize(primaryPayload.position - samplePosition);
+
+            vec3 w = samplePosition - primaryPayload.position;
+            float dist = length(w);
+            w /= dist;
+
+            float cosThetaX = max(0.0, dot(primaryPayload.normal, w));
+            float cosThetaY = 1;//max(0.0, dot(sampleNormal, w));
+
+            vec3 rayOrigin = primaryPayload.position + primaryPayload.normal * EPSILON;
+            vec3 rayDirection = normalize(samplePosition - rayOrigin);
+
+            Ray secondaryRay = Ray(rayOrigin, rayDirection, 0, dist-EPSILON);
+
+            uint rayFlags = gl_RayFlagsOpaqueEXT | gl_RayFlagsSkipClosestHitShaderEXT;
+
+            traceRayEXT(topLevelAS, rayFlags, CULL_MASK, 0, 0, 0, secondaryRay.origin, secondaryRay.tmin, secondaryRay.direction, secondaryRay.tmax, 0);
+            if (!payload.hit) {
+                vec3 directEmission = lightValue;
+                vec3 bsdfValue = (INV_PI * primaryPayload.bsdf.albedo * cosThetaX) / INV_TWO_PI;
+
+                if (lightSize == 0) {
+                    direct += bsdfValue * directEmission;
+                } else {
+                    float emitterPdf = 1.0 / (PI * lightSize * lightSize);
+                    direct += (bsdfValue * directEmission * cosThetaX * cosThetaY) / (dist * dist * emitterPdf);
+                }
+            }
+        }
+
+        color += (emission + direct) * throughput;
+
+        if (!RR && depth + 1 >= MAX_DEPTH) {
+            break;
+        }
+
+        if (bsdfValue == vec3(0)) {
+            break;
+        }
+
+        float rrProb = 1.0;
+        if (RR && depth + 1 >= 4) {
+            rrProb = max3(throughput);
+        }
+        if (RR && nextRandom(random).x >= rrProb) {
+            break;
+        }
+
+        throughput *= bsdfValue / rrProb;
+        throughput = vec3(min(1.0, throughput.r), 
+                          min(1.0, throughput.g), 
+                          min(1.0, throughput.b));
+
+
+        if (isTransmission) {
+            inside = !inside;
+        }
+
+        float offsetDirection = inside ? -1 : 1;
+        if (payload.bsdf.transmission != 1) {
+            offsetDirection = 1;
+        }
+
+        previousRay = ray;
+        previousPayload = primaryPayload;
+        previousAlpha = alpha;
+        previousBeta = beta;
+        previousBSDFValue = bsdfValue;
+
+        ray.origin = primaryPayload.position + offsetDirection * primaryPayload.normal * EPSILON;
+        ray.direction = wo;
+
+        depth++;
+    }
+
+    return color;
+}
+
+
+
+
+
+void main() {
+    vec4 average = imageLoad(cameraImage, ivec2(gl_LaunchIDEXT.xy)).rgba;
+    float frame = average.a + 1;
+    vec3 randomSeed = hash(uvec3(uint(gl_LaunchIDEXT.x),
+                                 uint(gl_LaunchIDEXT.y),
+                                 uint(frame)));
+
+
+    const vec2 pixelCenter = vec2(gl_LaunchIDEXT.xy) + randomSeed.xy;
+    const vec2 uv = pixelCenter/vec2(gl_LaunchSizeEXT.xy);
+    vec2 xyDir = uv * 2.0 - 1.0;
+
+    float aspectRatio = float(gl_LaunchSizeEXT.x) / float(gl_LaunchSizeEXT.y);
+    vec3 rayDirection = normalize(vec3(xyDir.x * aspectRatio, -xyDir.y, -1/tan(pushConstants.mCameraHalfFovAngle)));
+
+    vec3 rayOrigin = vec3(pushConstants.mCameraTransform[3]);
+    rayDirection = normalize(mat3(pushConstants.mCameraTransform) * rayDirection);
+
+    Ray primaryRay = Ray(rayOrigin, rayDirection, 0, 1000.0);
+    vec3 color = traceCameraRay(primaryRay, randomSeed);
+
+    if (isnan(color.r) || isnan(color.g) || isnan(color.b) ||
+        color.r < 0 || color.g < 0 || color.b < 0) {
+        color = vec3(0,0,0);
+    }
+
+    
+    average.rgb -= average.rgb / float(frame);
+    average.rgb += color / float(frame);
+    imageStore(cameraImage, ivec2(gl_LaunchIDEXT.xy), vec4(average.rgb, frame + 1));
+
+    vec3 outputColor = vec3(0.0);
+    if (BDPT) {
+        vec3 cameraPosition = vec3(pushConstants.mCameraTransform[3]);
+        vec3 lookAt = normalize(mat3(pushConstants.mCameraTransform) * vec3(0,0,1));
+
+        vec3 lightOrigin = lightPosition + squareToUniformSphere(nextRandom(randomSeed)) * lightSize;
+        vec3 sceneCenter = vec3(0,0,0);
+        float lightSpread = 0.4;
+        vec3 lightDirection = mix(normalize(sceneCenter - lightOrigin), squareToUniformSphere(nextRandom(randomSeed)), lightSpread);
+
+        Ray lightRay = Ray(lightOrigin, lightDirection, 0, 1000.0);
+        traceLightRay(lightRay, randomSeed, cameraPosition, lookAt);
+        vec4 lightColor = imageLoad(lightImage, ivec2(gl_LaunchIDEXT.xy)).rgba;
+        //float frame = lightColor.a + 1; 
+        //imageStore(lightImage, ivec2(gl_LaunchIDEXT.xy), vec4(lightColor.rgb, frame));
+
+        float totalSamples = frame + lightColor.a;
+        vec3 totalLight = lightColor.rgb + average.rgb * frame;
+        
+        outputColor = totalLight / totalSamples;
+        
+    } else {
+        outputColor = average.rgb;
+    }
+
+    outputColor = outputColor / (outputColor + vec3(1.0));
+    outputColor = pow(outputColor, vec3(1.0/2.2));
+
+    imageStore(resultImage, ivec2(gl_LaunchIDEXT.xy), vec4(outputColor, 1.0));
+}
