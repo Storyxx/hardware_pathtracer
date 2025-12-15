@@ -72,7 +72,7 @@ class material_helper {
 			mgd.mMetallic = mc.mMetallic;
 			mgd.mSmoothness = mc.mSmoothness;
 
-			mgd.mTransmission = mc.mTransmission;
+			//mgd.mTransmission = mc.mTransmission;
 
 			mgd.mSheen = mc.mSheen;
 			mgd.mThickness = mc.mThickness;

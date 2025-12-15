@@ -44,7 +44,7 @@
     <ClInclude Include="host_code\model_loader.h">
       <Filter>host_code</Filter>
     </ClInclude>
-    <ClInclude Include="host_code\INIReader.h">
+    <ClInclude Include="third_party\INIReader.h">
       <Filter>host_code</Filter>
     </ClInclude>
     <ClInclude Include="host_code\material_helper.hpp">

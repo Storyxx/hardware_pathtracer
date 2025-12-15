@@ -28,7 +28,7 @@
   <ItemGroup>
     <ClInclude Include="host_code\camera_controller.h" />
     <ClInclude Include="host_code\compressed_image_data.hpp" />
-    <ClInclude Include="host_code\INIReader.h" />
+    <ClInclude Include="third_party\INIReader.h" />
     <ClInclude Include="host_code\material_helper.hpp" />
     <ClInclude Include="host_code\model_loader.h" />
     <ClInclude Include="host_code\precompiled_headers.hpp" />
@@ -36,7 +36,7 @@
     <ClInclude Include="host_code\targetver.hpp" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="auto_vk_toolkit\visual_studio\auto_vk_toolkit\auto_vk_toolkit.vcxproj">
+    <ProjectReference Include="Auto-Vk-Toolkit\visual_studio\auto_vk_toolkit\auto_vk_toolkit.vcxproj">
       <Project>{602f842f-50c1-466d-8696-1707937d8ab9}</Project>
     </ProjectReference>
   </ItemGroup>
@@ -92,25 +92,25 @@
   <ImportGroup Label="Shared" />
   <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Debug_Vulkan|x64'" Label="PropertySheets">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
-    <Import Project="auto_vk_toolkit\visual_studio\props\solution_directories.props" />
-    <Import Project="auto_vk_toolkit\visual_studio\props\linked_libs_debug.props" />
-    <Import Project="auto_vk_toolkit\visual_studio\props\rendering_api_vulkan.props" />
-    <Import Project="auto_vk_toolkit\visual_studio\props\external_dependencies.props" />
-    <Import Project="auto_vk_toolkit\visual_studio\props\extra_debug_dependencies.props" />
+    <Import Project="Auto-Vk-Toolkit\visual_studio\props\solution_directories.props" />
+    <Import Project="Auto-Vk-Toolkit\visual_studio\props\linked_libs_debug.props" />
+    <Import Project="Auto-Vk-Toolkit\visual_studio\props\rendering_api_vulkan.props" />
+    <Import Project="Auto-Vk-Toolkit\visual_studio\props\external_dependencies.props" />
+    <Import Project="Auto-Vk-Toolkit\visual_studio\props\extra_debug_dependencies.props" />
   </ImportGroup>
   <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Release_Vulkan|x64'" Label="PropertySheets">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
-    <Import Project="auto_vk_toolkit\visual_studio\props\solution_directories.props" />
-    <Import Project="auto_vk_toolkit\visual_studio\props\linked_libs_release.props" />
-    <Import Project="auto_vk_toolkit\visual_studio\props\rendering_api_vulkan.props" />
-    <Import Project="auto_vk_toolkit\visual_studio\props\external_dependencies.props" />
+    <Import Project="Auto-Vk-Toolkit\visual_studio\props\solution_directories.props" />
+    <Import Project="Auto-Vk-Toolkit\visual_studio\props\linked_libs_release.props" />
+    <Import Project="Auto-Vk-Toolkit\visual_studio\props\rendering_api_vulkan.props" />
+    <Import Project="Auto-Vk-Toolkit\visual_studio\props\external_dependencies.props" />
   </ImportGroup>
   <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Publish_Vulkan|x64'" Label="PropertySheets">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
-    <Import Project="auto_vk_toolkit\visual_studio\props\solution_directories.props" />
-    <Import Project="auto_vk_toolkit\visual_studio\props\linked_libs_release.props" />
-    <Import Project="auto_vk_toolkit\visual_studio\props\rendering_api_vulkan.props" />
-    <Import Project="auto_vk_toolkit\visual_studio\props\external_dependencies.props" />
+    <Import Project="Auto-Vk-Toolkit\visual_studio\props\solution_directories.props" />
+    <Import Project="Auto-Vk-Toolkit\visual_studio\props\linked_libs_release.props" />
+    <Import Project="Auto-Vk-Toolkit\visual_studio\props\rendering_api_vulkan.props" />
+    <Import Project="Auto-Vk-Toolkit\visual_studio\props\external_dependencies.props" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release_Vulkan|x64'">

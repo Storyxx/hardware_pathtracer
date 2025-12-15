@@ -1,7 +1,7 @@
 #include "model_loader.h"
 
 #include "material_helper.hpp"
-#include "INIReader.h"
+#include "..\third_party\INIReader.h"
 
 #include <model.hpp>
 #include <sequential_invoker.hpp>
